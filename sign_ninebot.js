@@ -1,12 +1,10 @@
-import axios from "axios";
-import moment from "moment";
-import dotenv from "dotenv";
-import { fileURLToPath } from "url";
-import { dirname } from "path";
+const axios = require("axios");
+const moment = require("moment");
+const dotenv = require("dotenv");
+const path = require("path");
 
-// 初始化环境变量和路径
-const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: `${__dirname}/.env` });
+// 初始化环境变量和路径 - 直接使用全局的 __dirname
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 class NineBot {
     constructor(deviceId, authorization, name = "九号出行") {
@@ -161,7 +159,7 @@ class NineBot {
                 });
                 this.msg.push({
                     name: "今日签到状态",
-                    value: completed ? "已签到🎉" : "未签到❌",
+                    value: completed ? "已签到🎉🎉🎉🎉" : "未签到❌❌❌❌",
                 });
 
                 if (!completed) {
@@ -181,10 +179,10 @@ class NineBot {
                             // 更新今日签到状态
                             this.msg = this.msg.map(item =>
                                 item.name === "今日签到状态"
-                                    ? { name: "今日签到状态", value: "已签到🎉" }
+                                    ? { name: "今日签到状态", value: "已签到🎉🎉🎉🎉" }
                                     : item
                             );
-                            this.msg.push({ name: "签到结果", value: "签到成功🎉🎉" });
+                            this.msg.push({ name: "签到结果", value: "签到成功🎉🎉🎉🎉🎉🎉🎉🎉" });
                         } else {
                             this.msg.push({ name: "签到结果", value: "签到成功，但获取最新状态失败" });
                         }
@@ -204,78 +202,54 @@ class NineBot {
     }
 }
 
-// 发送Bark通知（支持完整参数配置）
-async function sendBarkNotification(title, message) {
-    // 从环境变量获取Bark配置
-    const barkUrl = process.env.BARK_URL || "https://api.day.app";
-    const barkKey = process.env.BARK_KEY;
+// 企业微信推送函数
+async function sendWeComNotification(title, message) {
+    const corpId = process.env.WECOM_CORP_ID;
+    const corpSecret = process.env.WECOM_CORP_SECRET;
+    const toUser = process.env.WECOM_TO_USER;
+    const agentId = process.env.WECOM_AGENT_ID;
 
-    // 没有Bark密钥则不发送
-    if (!barkKey) {
-        console.log("未配置BARK_KEY，跳过Bark通知");
+    if (!corpId || !corpSecret || !toUser || !agentId) {
+        console.error("企业微信配置不完整，跳过通知");
         return false;
     }
 
     try {
-        // 构建基础URL
-        let url = `${barkUrl}/${barkKey}/${encodeURIComponent(title)}/${encodeURIComponent(message)}`;
-
-        // 收集所有可选参数
-        const params = [];
-
-        // 通知分组
-        if (process.env.BARK_GROUP) {
-            params.push(`group=${encodeURIComponent(process.env.BARK_GROUP)}`);
+        // 获取access_token
+        const tokenResponse = await axios.get(
+            `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${corpId}&corpsecret=${corpSecret}`
+        );
+        
+        if (tokenResponse.data.errcode !== 0) {
+            throw new Error(`获取token失败: ${tokenResponse.data.errmsg}`);
         }
-
-        // 通知图标
-        if (process.env.BARK_ICON) {
-            params.push(`icon=${encodeURIComponent(process.env.BARK_ICON)}`);
-        }
-
-        // 通知铃声
-        if (process.env.BARK_SOUND) {
-            params.push(`sound=${encodeURIComponent(process.env.BARK_SOUND)}`);
-        }
-
-        // 点击跳转URL
-        if (process.env.BARK_URL_JUMP) {
-            params.push(`url=${encodeURIComponent(process.env.BARK_URL_JUMP)}`);
-        }
-
-        // 可复制文本
-        if (process.env.BARK_COPY) {
-            // 提取连续天数用于替换变量
-            const dayMatch = message.match(/连续签到天数: (\d+)天/);
-            const day = dayMatch ? dayMatch[1] : "未知";
-            const copyText = process.env.BARK_COPY.replace('%day%', day);
-            params.push(`copy=${encodeURIComponent(copyText)}`);
-        }
-
-        // 自动复制
-        if (process.env.BARK_AUTO_COPY === '1') {
-            params.push(`autoCopy=1`);
-        }
-
-        // 添加参数到URL
-        if (params.length > 0) {
-            url += `?${params.join('&')}`;
-        }
-
-        console.log(`发送Bark通知: ${url}`);
-
-        // 发送请求
-        const response = await axios.get(url, { timeout: 5000 });
-
-        if (response.data.code === 200) {
-            console.log("Bark通知发送成功");
+        
+        const accessToken = tokenResponse.data.access_token;
+        
+        // 发送消息
+        const data = {
+            touser: toUser,
+            msgtype: "text",
+            text: {
+                content: `${title}\n\n${message}`
+            },
+            agentid: parseInt(agentId)
+        };
+        
+        const sendResponse = await axios.post(
+            `https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${accessToken}`,
+            data
+        );
+        
+        if (sendResponse.data.errcode === 0) {
+            console.log("企业微信通知发送成功");
             return true;
         } else {
-            console.error("Bark通知发送失败:", response.data);
+            console.error("企业微信通知发送失败:", sendResponse.data.errmsg);
             return false;
         }
     } catch (error) {
-        console.error("发送Bark通知异常:", error.message);
+        console.error("发送企业微信通知异常:", error.message);
         return false;
     }
 }
@@ -334,13 +308,15 @@ async function init() {
     // 生成汇总通知内容
     const title = "九号出行签到结果";
     let message = allResults.map(acc => {
-        const status = acc.success ? "✅" : "❌";
+        const status = acc.success ? "✅" : "❌❌❌❌";
         return `${status} ${acc.name}\n${acc.logs.replace(/\n/g, "\n  ")}`;
     }).join("\n\n");
 
-    // 发送Bark通知
-    await sendBarkNotification(title, message);
+    // 调用企业微信推送
+    await sendWeComNotification(title, message);
 }
 
 // 启动执行
-init();
+init().catch(error => {
+    console.error("程序执行出错:", error);
+});
